@@ -61,7 +61,7 @@ unsigned long delaytime = 2000;
 int i = 0;
 
 /* States ans signals to change state*/
-enum State_enum {STATERESET, STATESTART, STATECLEAR, STATECHECK, STATELEFT, STATERIGTH, STATELOST};
+enum State_enum {STATERESET, STATESTART, STATECLEAR, STATECHECK, STATELEFT, STATERIGTH, STATELOST, STATEWON};
 uint8_t state = STATERESET;
 
 enum Keys_enum {RESET_KEY, START_KEY, LEFT_KEY, RIGHT_KEY, NO_KEY};
@@ -69,6 +69,11 @@ uint8_t keys = RESET_KEY;
 
 enum Status_enum {LOST, CONTINUE};
 uint8_t Status = CONTINUE;
+
+
+uint8_t currentLevel = 1;
+uint8_t carsPassed = 0;
+const uint8_t carsToNextLevel[] = {10, 15, 20};
 
 /* Key to control game by serial input. */
   int incomingByte;
@@ -379,6 +384,24 @@ void state_machine_run(byte *pointerRegMatrix, byte *pointerRegCar, byte *pointe
       writeGoCarsMatrix(pointerRegMatrix);
       delay(delaytime);
       checkLostMatrix(pointerRegMatrix, pointerRegCar);
+      // Incrementar contador de coches pasados
+      carsPassed++;
+
+      // Verificar si se ha pasado la cantidad requerida de coches para avanzar al siguiente nivel
+      if (currentLevel <= 3 && carsPassed >= carsToNextLevel[currentLevel - 1]) {
+          currentLevel++;
+          carsPassed = 0;
+          // Aumentar velocidad (ajustar según necesidades)
+          delaytime -= 100; // Reducir el tiempo de espera para aumentar la velocidad
+      }
+
+      if (currentLevel > 3) {
+          // El jugador ha completado todos los niveles
+          state = STATEWON; // Define este nuevo estado para indicar que el jugador ha ganado
+          break;
+      }
+
+
       if (Status == LOST)
         state = STATELOST;
       else if (keys == RESET_KEY)
@@ -389,6 +412,30 @@ void state_machine_run(byte *pointerRegMatrix, byte *pointerRegCar, byte *pointe
         state = STATERIGTH;
       else
         state = STATECHECK;
+      break;
+
+    case STATEWON:
+
+      // SERA DEJAR ACA O CREAR UNA NUEVA FUNCION PARA EL ESTADO GANAR 
+      pointerRegMatrix[0] = B00011000;
+      pointerRegMatrix[1] = B00111100;
+      pointerRegMatrix[2] = B01100110;
+      pointerRegMatrix[3] = B11000011;
+      pointerRegMatrix[4] = B11000011;
+      pointerRegMatrix[5] = B01100110;
+      pointerRegMatrix[6] = B00111100;
+      pointerRegMatrix[7] = B00011000;
+
+      PrintALLMatrix(pointerRegMatrix, pointerRegCar);
+
+      if (keys == START_KEY) {
+          state = STATERESET; // Volver al estado inicial
+          currentLevel = 1; // Reiniciar el nivel
+          carsPassed = 0; // Reiniciar el contador de coches pasados
+          delaytime = 2000; // Reiniciar la velocidad del juego (ajustar según sea necesario)
+          break;
+      }
+
       break;
 
     case STATELEFT:
