@@ -22,7 +22,11 @@
 #include <Arduino.h>
 
 #define REALMATRIX // Variable to use real matrix. Comment to not use it.
-
+#define START_PIN 1
+// #define LEFT_PIN 19
+// #define RIGHT_PIN 21
+#define RIGHT_PIN 21
+#define LEFT_PIN 19
 #ifdef REALMATRIX
 #include "LedControl.h"
 /* Pin definition for MAX72XX.
@@ -31,7 +35,10 @@
  ARDUINO pin 10 is connected to LOAD        - In ES32 pin 5
  We have only a single MAX72XX.
  */
-LedControl lc=LedControl(23,18,5,1);
+//#define RESET_PIN 2
+
+
+LedControl lc=LedControl(23,18,5,1);  
 #endif
 
 //=======================================================
@@ -59,21 +66,23 @@ unsigned long delaytime = 2000;
 
 /* Global Variables */
 int i = 0;
-
+/* Agrega una variable para contar las filas de carros pasadas */
+uint8_t carsPassed = 0;
+uint8_t currentLevel = 1;
+const uint8_t rowsPerLevel[] = {10, 15, 20}; // Cantidad de filas por nivel
+uint8_t playerMoveCounter = 0;
 /* States ans signals to change state*/
-enum State_enum {STATERESET, STATESTART, STATECLEAR, STATECHECK, STATELEFT, STATERIGTH, STATELOST, STATEWON};
-uint8_t state = STATERESET;
+enum State_enum {STATERESET, STATESTART, STATECLEAR, STATECHECK, STATELEFT, STATERIGTH, STATELOST, STATENUNO,STATEDOS, STATETRES, STATEWON};
+uint8_t state = STATESTART;
 
 enum Keys_enum {RESET_KEY, START_KEY, LEFT_KEY, RIGHT_KEY, NO_KEY};
 uint8_t keys = RESET_KEY;
 
-enum Status_enum {LOST, CONTINUE};
+enum Status_enum {LOST, CONTINUE, NIVELDOS, NIVELTRES, WIN};
 uint8_t Status = CONTINUE;
 
 
-uint8_t currentLevel = 1;
-uint8_t carsPassed = 0;
-const uint8_t carsToNextLevel[] = {10, 15, 20};
+
 
 /* Key to control game by serial input. */
   int incomingByte;
@@ -96,6 +105,11 @@ const uint8_t carsToNextLevel[] = {10, 15, 20};
 /* Setup function initialization */
 void setup()
 {
+
+  //pinMode(RESET_PIN, INPUT_PULLUP);
+  pinMode(START_PIN, INPUT_PULLUP);
+  pinMode(LEFT_PIN, INPUT_PULLUP);
+  pinMode(RIGHT_PIN, INPUT_PULLUP);
 #ifdef REALMATRIX
   /* The MAX72XX is in power-saving mode on startup, we have to do a wakeup call. */
   lc.shutdown(0, false);
@@ -210,6 +224,20 @@ void writeGoCarsMatrix(byte *pointerRegMatrix)
   {
     pointerRegMatrix[m] = pointerRegMatrix[m + 1];
   }
+  /* Verifica si la última fila ahora está vacía */
+  if (pointerRegMatrix[7] == 0) {
+    /* Incrementa el contador de filas pasadas */
+    carsPassed++;
+  }
+  Serial.print("car pass: ");
+  Serial.print(carsPassed);
+
+  if (currentLevel==2)
+    Status=NIVELDOS;
+  else if (currentLevel==3)
+    Status= NIVELTRES;
+  
+
   if (i % 2 == 0)
     pointerRegMatrix[7] = RegBACKGTYPE_dataRANDOM;
   else
@@ -258,6 +286,11 @@ void checkLostMatrix(byte *pointerRegMatrix, byte *pointerRegCar)
     Status = LOST;
   else
     Status = CONTINUE;
+
+   /* Reinicia el contador de filas pasadas si el jugador pierde */
+  if (Status == LOST) {
+    carsPassed = 0;
+  }
 }
 //=======================================================
 //  FUNCTION: printBits (by console all bits)
@@ -318,12 +351,52 @@ void PrintALLMatrix(byte *pointerRegMatrix, byte *pointerRegCar)
 //=======================================================
 byte read_KEY(void)
 {
+  int buttonStateStart = digitalRead(START_PIN);
+  //int buttonStateReset = digitalRead(RESET_PIN);
+  int buttonStateLeft = digitalRead(LEFT_PIN);
+  int buttonStateRight = digitalRead(RIGHT_PIN);
   if (Serial.available() > 0)
   {
     incomingByte = Serial.read();
     delay(10);
-    //    Serial.print("I received: ");
-    //    Serial.println(incomingByte, DEC);
+    Serial.print("I received: ");
+    Serial.println(incomingByte, DEC);
+  }
+
+
+  if (buttonStateStart != HIGH)
+  {
+    /* code */
+    keys = START_KEY;
+    incomingByte= 'S';
+    //return keys;
+  }
+  // // if (buttonStateReset != HIGH)
+  // // {
+  // //   /* code */
+  // //   keys = RESET_KEY;
+  // //   incomingByte= 'R';
+  // //   return keys;
+  // // }
+  if (buttonStateLeft != HIGH)
+  {
+    /* code */
+    keys = LEFT_KEY;
+    incomingByte= 'A';
+    //return keys;
+  }
+  if (buttonStateRight != HIGH)
+  {
+    /* code */
+    keys = RIGHT_KEY;
+    incomingByte= 'D';
+    //return keys;
+  }
+  else 
+  {
+    /* code */
+    keys = NO_KEY;
+    //return keys;
   }
   switch (incomingByte)
   {
@@ -339,6 +412,7 @@ byte read_KEY(void)
     case 'D':
       keys = RIGHT_KEY;
       break;
+
     default:
       keys = NO_KEY;
       break;
@@ -351,13 +425,15 @@ return keys;
 void state_machine_run(byte *pointerRegMatrix, byte *pointerRegCar, byte *pointerShiftDir)
 {
   /* Global variables. */
-  int count;
 
   PrintALLMatrix(pointerRegMatrix, pointerRegCar);
 
   switch (state)
   {
     case STATERESET:
+      currentLevel = 1; // Reiniciar el nivel
+      carsPassed = 0; // Reiniciar el contador de coches pasados
+      delaytime = 2000;
       writeResetMatrix(pointerRegMatrix,pointerRegCar);
       delay(delaytime);
       if (keys == RESET_KEY)
@@ -369,8 +445,23 @@ void state_machine_run(byte *pointerRegMatrix, byte *pointerRegCar, byte *pointe
     case STATESTART:
       writeStartMatrix(pointerRegMatrix,pointerRegCar);
       delay(delaytime);
-      state = STATECLEAR;
+      state = STATENUNO;
       break;
+
+    case STATENUNO:
+        /* Here is the data to start matrix */
+        pointerRegMatrix[7] = B00111100;
+        pointerRegMatrix[6] = B00111110;
+        pointerRegMatrix[5] = B00111111;
+        pointerRegMatrix[4] = B00111100;
+        pointerRegMatrix[3] = B00111100;
+        pointerRegMatrix[2] = B00111100;
+        pointerRegMatrix[1] = B11111111;
+        pointerRegMatrix[0] = B11111111;
+        delay (delaytime);
+        state=STATECLEAR;
+        break;
+
 
     case STATECLEAR:
       writeClearMatrix(pointerRegMatrix,pointerRegCar);
@@ -379,44 +470,112 @@ void state_machine_run(byte *pointerRegMatrix, byte *pointerRegCar, byte *pointe
       break;
 
     case STATECHECK:
+      // pointerShiftDir[0] = B00000000;
+      // writeCarBase(pointerRegCar, pointerShiftDir);
+      // writeGoCarsMatrix(pointerRegMatrix);
+      // delay(delaytime);
+      // checkLostMatrix(pointerRegMatrix, pointerRegCar);
+      
       pointerShiftDir[0] = B00000000;
-      writeCarBase(pointerRegCar, pointerShiftDir);
+      // Movimiento del carro del jugador
+      if (keys == LEFT_KEY && playerMoveCounter >=1) {
+        pointerShiftDir[0] = B00000001;
+        playerMoveCounter = 0; // Reiniciamos el contador después de mover el carro del jugador
+      } else if (keys == RIGHT_KEY && playerMoveCounter >= 1) {
+        pointerShiftDir[0] = B00000010;
+        playerMoveCounter = 0; // Reiniciamos el contador después de mover el carro del jugador
+      }
+      // Movimiento de los carros que bajan
+      if (i % 5 == 0) { // Solo se mueven los carros cada 5 iteraciones para que sean más lentos
+        writeCarBase(pointerRegCar, pointerShiftDir);
+      }
+      // Incrementamos el contador para el movimiento del carro del jugador
+      if (keys == LEFT_KEY || keys == RIGHT_KEY) {
+        playerMoveCounter++;
+      }
       writeGoCarsMatrix(pointerRegMatrix);
       delay(delaytime);
       checkLostMatrix(pointerRegMatrix, pointerRegCar);
-      // Incrementar contador de coches pasados
-      carsPassed++;
+       Serial.print("Current Level: ");
+        Serial.println(currentLevel);
+        Serial.print("Cars Passed: ");
+        Serial.println(carsPassed);
+        Serial.print("Rows per Level ");
+        Serial.print(currentLevel);
+        Serial.print(": ");
+        Serial.println(rowsPerLevel[currentLevel - 1]);
 
-      // Verificar si se ha pasado la cantidad requerida de coches para avanzar al siguiente nivel
-      if (currentLevel <= 3 && carsPassed >= carsToNextLevel[currentLevel - 1]) {
-          currentLevel++;
-          carsPassed = 0;
-          // Aumentar velocidad (ajustar según necesidades)
-          delaytime -= 100; // Reducir el tiempo de espera para aumentar la velocidad
-      }
-
-      if (currentLevel > 3) {
-          // El jugador ha completado todos los niveles
-          state = STATEWON; // Define este nuevo estado para indicar que el jugador ha ganado
-          break;
-      }
-
+        if (carsPassed == rowsPerLevel[currentLevel - 1]) {
+          if (currentLevel == 1) {
+            currentLevel = 2;
+            carsPassed = 0;
+            state = STATEDOS;
+            break;
+          } else if (currentLevel == 2) {
+            currentLevel = 3;
+            carsPassed = 0;
+            state = STATETRES;
+            break;
+          } else if (currentLevel == 3) {
+            state = STATEWON;
+            break;
+          }
+        }
 
       if (Status == LOST)
         state = STATELOST;
+      else if (Status == NIVELDOS)
+        state = STATEDOS;
+      else if (Status == NIVELTRES)
+        state = STATETRES;
+      else if ( Status == WIN)
+        state = STATEWON;
       else if (keys == RESET_KEY)
         state = STATERESET;
       else if (keys == LEFT_KEY)
         state = STATELEFT;
       else if (keys == RIGHT_KEY)
         state = STATERIGTH;
+      else if (keys == NO_KEY)
+        state = STATECHECK;
       else
         state = STATECHECK;
       break;
+      
 
+    case STATEDOS:
+         /* Here is the data to start matrix */
+        pointerRegMatrix[7] = B11111110;
+        pointerRegMatrix[6] = B11000011;
+        pointerRegMatrix[5] = B11000001;
+        pointerRegMatrix[4] = B01100000;
+        pointerRegMatrix[3] = B00110000;
+        pointerRegMatrix[2] = B00011000;
+        pointerRegMatrix[1] = B11111111;
+        pointerRegMatrix[0] = B11111111;
+        delay (delaytime);
+        delaytime = delaytime/3;
+        state=STATECLEAR;
+        break;
+
+    case STATETRES:
+         /* Here is the data to start matrix */
+        pointerRegMatrix[7] = B11111111;
+        pointerRegMatrix[6] = B11000000;
+        pointerRegMatrix[5] = B11110000;
+        pointerRegMatrix[4] = B11000000;
+        pointerRegMatrix[3] = B01100000;
+        pointerRegMatrix[2] = B00110000;
+        pointerRegMatrix[1] = B11111111;
+        pointerRegMatrix[0] = B11111111;
+        delaytime = 2000;
+        delay (delaytime);
+        delaytime = delaytime/3;
+        delaytime = delaytime/3;
+        state=STATECLEAR;
+        break;
+      
     case STATEWON:
-
-      // SERA DEJAR ACA O CREAR UNA NUEVA FUNCION PARA EL ESTADO GANAR 
       pointerRegMatrix[0] = B00011000;
       pointerRegMatrix[1] = B00111100;
       pointerRegMatrix[2] = B01100110;
@@ -426,7 +585,7 @@ void state_machine_run(byte *pointerRegMatrix, byte *pointerRegCar, byte *pointe
       pointerRegMatrix[6] = B00111100;
       pointerRegMatrix[7] = B00011000;
 
-      PrintALLMatrix(pointerRegMatrix, pointerRegCar);
+      //   PrintALLMatrix(pointerRegMatrix, pointerRegCar);
 
       if (keys == START_KEY) {
           state = STATERESET; // Volver al estado inicial
@@ -435,7 +594,6 @@ void state_machine_run(byte *pointerRegMatrix, byte *pointerRegCar, byte *pointe
           delaytime = 2000; // Reiniciar la velocidad del juego (ajustar según sea necesario)
           break;
       }
-
       break;
 
     case STATELEFT:
@@ -452,11 +610,12 @@ void state_machine_run(byte *pointerRegMatrix, byte *pointerRegCar, byte *pointe
 
     case STATELOST:
       writeLostMatrix(pointerRegMatrix,pointerRegCar);
+      delaytime = 2000;
       delay(delaytime);
       if (keys == START_KEY)
         state = STATESTART;
       else
-        state = STATELOST;
+        state = STATERESET;
       break;
 
     default:
@@ -469,7 +628,6 @@ void state_machine_run(byte *pointerRegMatrix, byte *pointerRegCar, byte *pointe
 //=======================================================
 void loop()
 {
-  
   read_KEY();
   state_machine_run(pointerRegMatrix,pointerRegCar,pointerShiftDir);
   delay(1);
